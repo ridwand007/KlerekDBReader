@@ -6,6 +6,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,6 +24,70 @@ jobs:
 
       - name: Extract project
         run: unzip -q KlerekDBReader-AndroidStudio.zip -d source
+
+      - name: Install DBF Reader
+        run: pip install dbfread
+
+      - name: Convert DBF to SQLite
+        run: |
+          python3 - <<'PY'
+          import sqlite3
+          from dbfread import DBF
+
+          dbf = DBF(
+              'barang.DBF',
+              encoding='cp1252',
+              char_decode_errors='replace'
+          )
+
+          fields = [field.name for field in dbf.fields]
+
+          print("Kolom DBF:", fields)
+
+          if 'PLU' not in fields or 'DESCP' not in fields:
+              raise Exception("Kolom PLU atau DESCP tidak ditemukan!")
+
+          output = 'source/KlerekDBReader/app/src/main/assets/barang.db'
+
+          import os
+          os.makedirs(os.path.dirname(output), exist_ok=True)
+
+          conn = sqlite3.connect(output)
+          cur = conn.cursor()
+
+          columns = ', '.join(
+              '"' + name + '" TEXT'
+              for name in fields
+          )
+
+          cur.execute(
+              'CREATE TABLE barang (' + columns + ')'
+          )
+
+          placeholders = ', '.join(['?'] * len(fields))
+          names = ', '.join('"' + name + '"' for name in fields)
+
+          sql = 'INSERT INTO barang (' + names + ') VALUES (' + placeholders + ')'
+
+          count = 0
+
+          for record in dbf:
+              values = [
+                  str(record.get(name) or '').strip()
+                  for name in fields
+              ]
+              cur.execute(sql, values)
+              count += 1
+
+          cur.execute('CREATE INDEX idx_barang_plu ON barang(PLU)')
+
+          conn.commit()
+          conn.close()
+
+          print("Konversi berhasil!")
+          print("Jumlah barang:", count)
+          print("Database:", output)
+          PY
 
       - name: Build APK
         run: gradle -p source/KlerekDBReader assembleDebug
